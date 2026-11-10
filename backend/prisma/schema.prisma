@@ -1,0 +1,499 @@
+// backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =========================================================
+// ENUMS
+// =========================================================
+
+enum Role {
+  ADMIN
+  SUPERVISOR
+  STAFF
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  SUSPENDED
+}
+
+enum ProfileStatus {
+  ACTIVE
+  UNASSIGNED
+  ARCHIVED
+  TEMPLATE
+}
+
+enum ParqStatus {
+  COMPLETE
+  INCOMPLETE
+}
+
+enum AccessLevel {
+  MYSELF
+  SHARED_WITH_ALL
+  SHARED_WITH_GROUPS
+}
+
+enum Visibility {
+  ALL_WORKOUTS
+  ASSIGNED_WORKOUTS
+  NO_WORKOUTS
+}
+
+enum VideoPlatform {
+  NONE
+  YOUTUBE
+  VIMEO
+}
+
+enum TaskStatus {
+  OPEN
+  COMPLETED
+  OVERDUE
+}
+
+enum TaskPriority {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+}
+
+enum TaskType {
+  GENERAL
+  METRICS
+  FORMS
+  GOALS
+  CONTACT
+}
+
+enum EventType {
+  WORKOUT
+  REST_DAY
+  ASSESSMENT
+  NOTE
+}
+
+enum ConversationStatus {
+  ACTIVE
+  UNASSIGNED
+  ESCALATED
+  CLOSED
+}
+
+enum ActivityType {
+  WORKOUT
+  REST_DAY
+  ASSESSMENT
+  NOTE
+}
+
+// =========================================================
+// USER
+// =========================================================
+
+model User {
+  id                String     @id @default(cuid())
+  email             String     @unique
+  password          String     @default("")
+  firstName         String
+  lastName          String
+  role              Role       @default(STAFF)
+  status            UserStatus @default(PENDING)
+  phone             String?
+  profilePhoto      String?
+  group             String?
+  createdById       String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  activationToken   String?    @unique
+  activationExpires DateTime?
+  activatedAt       DateTime?
+
+  resetToken        String?    @unique
+  resetExpires      DateTime?
+
+  createdBy         User?          @relation("UserCreatedBy", fields: [createdById], references: [id])
+  createdUsers      User[]         @relation("UserCreatedBy")
+
+  staffProfiles     Profile[]      @relation("StaffProfiles")
+  programs          Program[]      @relation("CreatorPrograms")
+  workouts          Workout[]      @relation("CreatorWorkouts")
+  exercises         Exercise[]     @relation("CreatorExercises")
+  forms             Form[]         @relation("CreatorForms")
+  reports           Report[]       @relation("CreatorReports")
+  groupsOwned       Group[]        @relation("GroupOwner")
+
+  tasksCreated      Task[]         @relation("TaskCreator")
+  tasksAssigned     Task[]         @relation("TaskAssignee")
+  eventsCreated     Event[]        @relation("EventCreator")
+  conversations     Conversation[] @relation("ConversationTrainer")
+
+  settings          Settings?
+
+  @@index([role])
+  @@index([status])
+  @@index([email])
+  @@index([activationToken])
+  @@index([resetToken])
+}
+
+// =========================================================
+// PROFILE
+// =========================================================
+
+model Profile {
+  id             String        @id @default(cuid())
+  firstName      String
+  lastName       String
+  email          String?
+  phone          String?
+  sex            String?
+  birthday       String?
+  heightFt       Int?
+  heightIn       Int?
+  profilePhoto   String?
+  measurementSystem String     @default("Imperial")
+  clientAccess   String        @default("deny")
+  status         ProfileStatus @default(ACTIVE)
+
+  parqStatus     ParqStatus    @default(INCOMPLETE)
+  lastTested     String?
+  nextGoal       String?
+  overdueMetrics Int           @default(0)
+
+  groups         String[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  staffId        String?
+  staff          User?         @relation("StaffProfiles", fields: [staffId], references: [id])
+
+  tasks          Task[]
+  events         Event[]
+  conversations  Conversation[]
+  formResponses  FormResponse[]
+  assignedPrograms ProfileProgram[]
+
+  @@index([staffId])
+  @@index([email])
+  @@index([status])
+}
+
+// =========================================================
+// PROGRAM
+// =========================================================
+
+model Program {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  weeks       Int        @default(1)
+  access      AccessLevel @default(MYSELF)
+  visibility  Visibility  @default(ALL_WORKOUTS)
+  metrics     String[]
+  activities  Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  creatorId   String
+  creator     User        @relation("CreatorPrograms", fields: [creatorId], references: [id])
+
+  profileAssignments ProfileProgram[]
+
+  @@index([creatorId])
+  @@index([name])
+}
+
+// =========================================================
+// PROFILE ↔ PROGRAM ASSIGNMENT
+// One row per (profile, program) assignment.
+// Stores a per-profile copy of activities + optional startDate
+// so different profiles can have different schedules for the
+// same program template.
+// =========================================================
+
+model ProfileProgram {
+  id          String    @id @default(cuid())
+  profileId   String
+  programId   String
+  startDate   DateTime?
+  activities  Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  program     Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, programId])
+  @@index([profileId])
+  @@index([programId])
+}
+
+// =========================================================
+// WORKOUT
+// =========================================================
+
+model Workout {
+  id          String      @id @default(cuid())
+  name        String
+  duration    String?
+  access      AccessLevel @default(MYSELF)
+  note        String?
+  programName String?
+  items       Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  creatorId   String
+  creator     User        @relation("CreatorWorkouts", fields: [creatorId], references: [id])
+
+  @@index([creatorId])
+  @@index([name])
+}
+
+// =========================================================
+// EXERCISE
+// =========================================================
+
+model Exercise {
+  id                 String        @id @default(cuid())
+  name               String
+  access             AccessLevel   @default(MYSELF)
+  units              String[]
+  bodySegment        String?
+  primaryMuscle      String?
+  equipment          String?
+  mechanics          String?
+  force              String?
+  instructions       String?
+  videoPlatform      VideoPlatform @default(NONE)
+  videoUrl           String?
+  sourceLabel        String?
+  screenshot         String?
+  shareWithCommunity Boolean       @default(false)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  creatorId          String
+  creator            User          @relation("CreatorExercises", fields: [creatorId], references: [id])
+
+  @@index([creatorId])
+  @@index([primaryMuscle])
+  @@index([equipment])
+}
+
+// =========================================================
+// FORM + RESPONSE
+// =========================================================
+
+model Form {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  fields      Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  creatorId   String
+  creator     User     @relation("CreatorForms", fields: [creatorId], references: [id])
+
+  responses   FormResponse[]
+
+  @@index([creatorId])
+}
+
+model FormResponse {
+  id          String   @id @default(cuid())
+  formId      String
+  profileId   String
+  answers     Json
+  createdAt   DateTime @default(now())
+
+  form        Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([formId])
+  @@index([profileId])
+}
+
+// =========================================================
+// REPORT
+// =========================================================
+
+model Report {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  data        Json?
+  periodStart DateTime?
+  periodEnd   DateTime?
+  createdAt   DateTime @default(now())
+
+  creatorId   String
+  creator     User     @relation("CreatorReports", fields: [creatorId], references: [id])
+
+  @@index([creatorId])
+  @@index([type])
+}
+
+// =========================================================
+// SETTINGS
+// =========================================================
+
+model Settings {
+  id           String   @id @default(cuid())
+  primaryColor String   @default("#F59E0B")
+  accountLogo  String?
+  integrations Json?
+  businessInfo Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// =========================================================
+// TASKS
+// =========================================================
+
+model Task {
+  id            String       @id @default(cuid())
+  title         String
+  description   String?
+  status        TaskStatus   @default(OPEN)
+  priority      TaskPriority @default(NORMAL)
+  type          TaskType     @default(GENERAL)
+  dueDate       DateTime?
+  completedDate DateTime?
+  assignees     String[]
+  profiles      String[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  creatorId     String?
+  creator       User?        @relation("TaskCreator", fields: [creatorId], references: [id])
+  assigneeId    String?
+  assignee      User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  profileId     String?
+  profile       Profile?     @relation(fields: [profileId], references: [id])
+
+  @@index([status])
+  @@index([creatorId])
+  @@index([assigneeId])
+  @@index([profileId])
+}
+
+// =========================================================
+// EVENTS
+// =========================================================
+
+model Event {
+  id         String     @id @default(cuid())
+  title      String
+  type       EventType  @default(WORKOUT)
+  date       DateTime?
+  startTime  String?
+  endTime    String?
+  note       String?
+  users      String[]
+  profiles   String[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  creatorId  String?
+  creator    User?      @relation("EventCreator", fields: [creatorId], references: [id])
+  profileId  String?
+  profile    Profile?   @relation(fields: [profileId], references: [id])
+
+  @@index([date])
+  @@index([creatorId])
+  @@index([profileId])
+}
+
+// =========================================================
+// MESSAGES / CONVERSATIONS
+// =========================================================
+
+model Conversation {
+  id          String             @id @default(cuid())
+  profileId   String
+  trainerId   String?
+  lastMessage String?
+  unread      Boolean            @default(true)
+  status      ConversationStatus @default(ACTIVE)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  profile     Profile            @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  trainer     User?              @relation("ConversationTrainer", fields: [trainerId], references: [id])
+  messages    Message[]
+
+  @@index([profileId])
+  @@index([trainerId])
+  @@index([status])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderName     String
+  body           String
+  flagged        Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([flagged])
+}
+
+// =========================================================
+// GROUPS
+// =========================================================
+
+model Group {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  supervisors  String[]
+  staff        String[]
+  profiles     String[]
+  primaryColor String   @default("#3b82f6")
+  logo         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ownerId      String?
+  owner        User?    @relation("GroupOwner", fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([name])
+}
+
+// =========================================================
+// PRIVILEGES
+// Singleton row holding the global role-permission matrix.
+// 13 keys × 3 roles, stored as JSON.
+// =========================================================
+
+model Privileges {
+  id        String   @id @default("singleton")
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  @@map("privileges")
+}
